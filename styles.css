@@ -23,6 +23,7 @@
 
 *{ box-sizing: border-box; }
 html,body{ height:100%; margin:0; }
+html{ -webkit-text-size-adjust: 100%; }
 body{
   background: var(--bay);
   color: var(--bone);
@@ -33,6 +34,8 @@ body{
   -webkit-user-select: none;
   -moz-user-select: none;
   -ms-user-select: none;
+  touch-action: manipulation;
+  height: 100dvh;
 }
 img{ -webkit-user-drag: none; user-drag: none; pointer-events: none; }
 input, textarea, [contenteditable="true"]{
@@ -188,8 +191,11 @@ input, select{ font-family: inherit; }
 
 /* ===================== APP SHELL ===================== */
 .app{
-  height:100vh; display:flex; flex-direction:column;
+  height:100vh; height:100dvh; display:flex; flex-direction:column;
 }
+
+/* mobile-only chrome hidden by default (shown via media query below) */
+.mobile-props-toggle, .mobile-tabbar, .mobile-scrim{ display:none; }
 
 /* ---- topbar ---- */
 .topbar{
@@ -218,6 +224,7 @@ input, select{ font-family: inherit; }
   font-size:13px; font-weight:600; padding:7px 14px; border-radius: var(--radius-sm);
   border:1px solid var(--line); background: transparent; color: var(--bone);
   transition: background .15s, border-color .15s, transform .05s;
+  min-height:36px; display:inline-flex; align-items:center; justify-content:center;
 }
 .btn:active{ transform: scale(.97); }
 .btn-ghost{ color: var(--slate); border-color: var(--line); }
@@ -303,6 +310,7 @@ input, select{ font-family: inherit; }
 .tbtn{
   background: var(--track-navy); border:1px solid var(--line); color: var(--bone);
   border-radius: var(--radius-sm); padding:6px 12px; font-size:13px; font-weight:600;
+  min-height:36px;
 }
 .tbtn:hover{ border-color: var(--amber); color: var(--amber); }
 .transport-tc{ font-family: var(--font-mono); font-size:12px; color: var(--teal); }
@@ -417,10 +425,12 @@ textarea.prop-textarea{
 }
 .clip-handle{
   position:absolute; top:0; bottom:0; width:8px; cursor: ew-resize; z-index:5;
+  touch-action: none;
 }
 .clip-handle.left{ left:0; }
 .clip-handle.right{ right:0; }
 .clip-handle:hover{ background: rgba(255,255,255,.15); }
+.clip{ touch-action: none; }
 
 /* ===================== MODAL ===================== */
 .modal-overlay{
@@ -450,8 +460,133 @@ textarea.prop-textarea{
 ::-webkit-scrollbar-thumb{ background: var(--line); border-radius: 5px; }
 ::-webkit-scrollbar-thumb:hover{ background: var(--slate-dim); }
 
-/* responsive floor */
-@media (max-width: 900px){
+/* ============================================================
+   MOBILE / TABLET UX  (<= 860px : phones + small tablets)
+   Strategy:
+   - Media/Text/Audio pool and Properties panel become full-width
+     slide-up sheets, opened via a bottom tab bar, instead of fixed
+     side columns.
+   - Timeline track-label column shrinks; clip handles get bigger
+     invisible hit areas for touch.
+   - Modal, ad overlay, topbar condense for narrow width.
+   ============================================================ */
+@media (max-width: 860px){
+
+  html{ font-size: 15px; }
+
+  /* ---- topbar ---- */
+  .topbar{ padding: 0 10px; height:50px; }
+  .logo-word{ display:none; }
+  .proj-name{ margin-left:4px; font-size:12px; max-width:34vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .topbar-center{ display:none; }
+  .topbar-right{ gap:6px; }
+  .topbar-right .btn{ padding:6px 10px; font-size:12px; }
+  #exportBtn{ padding:6px 12px; }
+  .mobile-props-toggle{ display:inline-flex; }
+
+  /* ---- workspace: stage takes full width/height, sheets overlay ---- */
+  .workspace{ position:relative; }
+
+  .pool, .props{
+    position: fixed; left:0; right:0; bottom:0; z-index: 400;
+    width:auto; max-height: 72vh;
+    border-radius: 16px 16px 0 0;
+    border:1px solid var(--line); border-bottom:none;
+    box-shadow: 0 -12px 40px rgba(0,0,0,.55);
+    transform: translateY(105%);
+    transition: transform .28s cubic-bezier(.2,.9,.25,1);
+    display:flex; flex-direction:column;
+  }
+  .pool.sheet-open, .props.sheet-open{ transform: translateY(0); }
+
+  /* small grab-handle affordance at the top of each sheet */
+  .pool::before, .props::before{
+    content:''; display:block; margin: 8px auto 2px; width:36px; height:4px;
+    border-radius: 3px; background: var(--line); flex:0 0 auto;
+  }
+
+  .pool-panel{ padding-bottom: 28px; }
+  .props{ padding: 0 16px 24px; overflow-y:auto; }
+  .props-empty{ margin-top:16px; }
+
+  .mobile-scrim{
+    display:block; position:fixed; inset:0; background: rgba(0,0,0,.5);
+    z-index: 390; opacity:0; pointer-events:none; transition: opacity .25s ease;
+  }
+  .mobile-scrim.show{ opacity:1; pointer-events:auto; }
+
+  /* ---- stage ---- */
+  .preview-frame{ padding: 10px; }
+  #previewCanvas{ max-height: calc(100dvh - 340px); }
+  .transport{ height:52px; padding:0 10px; gap:8px; }
+  .transport-tc{ font-size:11px; }
+  .zoom-ctl span{ display:none; }
+  .zoom-ctl input{ width:70px; }
+
+  .copyright-mark{ display:none; }
+
+  /* ---- timeline: narrower label column, taller tracks/clips for touch ---- */
+  .timeline-region{ height: 176px; padding-bottom: 62px; /* room for tab bar */ }
+  .tracks{ padding-left: 96px; }
+  .track{ height:52px; }
+  .track-label{ left:-96px; width:96px; padding:0 8px; font-size:9.5px; gap:5px; }
+  .track-icon{ font-size:12px; }
+  .playhead{ left:96px; }
+  .clip-handle{ width:16px; }
+  .clip-name{ font-size:10px; padding:0 10px; }
+
+  /* ---- bottom tab bar ---- */
+  .mobile-tabbar{
+    display:flex; position:fixed; left:0; right:0; bottom:0; z-index: 410;
+    height:56px; background: var(--bay-raised); border-top:1px solid var(--line);
+    padding-bottom: env(safe-area-inset-bottom, 0);
+  }
+  .mtab{
+    flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:2px; background:none; border:none; color: var(--slate);
+  }
+  .mtab.active{ color: var(--amber); }
+  .mtab-icon{ font-size:16px; line-height:1; }
+  .mtab-label{ font-size:9.5px; font-weight:600; letter-spacing:.02em; text-transform:uppercase; }
+
+  /* ---- modal ---- */
+  .modal-overlay{ align-items:flex-end; }
+  .modal{
+    width:100%; max-width:100%; border-radius: 16px 16px 0 0;
+    padding: 18px 16px calc(20px + env(safe-area-inset-bottom, 0));
+  }
+  .modal-row select{ width: 55vw; max-width:220px; }
+
+  /* ---- pre-roll ad ---- */
+  .ad-overlay .content{ padding:0 22px; }
+  .ad-overlay h1{ font-size:24px; }
+  .ad-overlay .cta-pill{ bottom:70px; right:10px; padding:9px 14px; font-size:13px; }
+}
+
+/* Small phones: trim further */
+@media (max-width: 420px){
+  .proj-name{ display:none; }
+  .transport-spacer{ display:none; }
+  .zoom-ctl{ display:none; }
+  .tracks{ padding-left: 78px; }
+  .track-label{ left:-78px; width:78px; }
+  .playhead{ left:78px; }
+  .track-label .track-icon + *{ display:none; } /* icon-only label on very small screens */
+}
+
+/* Landscape phones / small tablets: tighten vertical chrome so timeline fits */
+@media (max-width: 860px) and (orientation: landscape){
+  .timeline-region{ height: 140px; padding-bottom: 56px; }
+  .track{ height:40px; }
+  .mobile-tabbar{ height:48px; }
+  .mtab-label{ display:none; }
+  #previewCanvas{ max-height: calc(100dvh - 220px); }
+}
+
+/* Tablets in portrait (861–1100px): keep two-pane desktop-ish layout but
+   narrow the side columns so nothing overflows */
+@media (min-width: 861px) and (max-width: 1100px){
   .pool{ width:220px; }
-  .props{ width:210px; }
+  .props{ width:220px; }
+  .timeline-region{ height:190px; }
 }
