@@ -71,6 +71,7 @@
     <div class="topbar-right">
       <button class="btn btn-ghost" id="undoBtn" title="Undo">↺</button>
       <button class="btn btn-ghost" id="redoBtn" title="Redo">↻</button>
+      <button class="btn btn-ghost mobile-props-toggle" id="mobilePropsToggle" title="Properties">☰</button>
       <button class="btn btn-primary" id="exportBtn">Export video</button>
     </div>
   </header>
@@ -151,6 +152,25 @@
     </div>
     <div class="tracks" id="tracks"></div>
   </section>
+
+  <!-- Mobile-only: scrim behind slide-up panels -->
+  <div class="mobile-scrim" id="mobileScrim"></div>
+
+  <!-- Mobile-only: bottom tab bar -->
+  <nav class="mobile-tabbar" id="mobileTabbar">
+    <button class="mtab active" data-mtab="media" title="Media">
+      <span class="mtab-icon">⤒</span><span class="mtab-label">Media</span>
+    </button>
+    <button class="mtab" data-mtab="text" title="Text">
+      <span class="mtab-icon">T</span><span class="mtab-label">Text</span>
+    </button>
+    <button class="mtab" data-mtab="audio" title="Audio">
+      <span class="mtab-icon">♪</span><span class="mtab-label">Audio</span>
+    </button>
+    <button class="mtab" data-mtab="props" title="Properties">
+      <span class="mtab-icon">⚙</span><span class="mtab-label">Edit</span>
+    </button>
+  </nav>
 </div>
 
 <!-- ============ EXPORT MODAL ============ -->
