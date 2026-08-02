@@ -798,6 +798,7 @@ async function runExport(){
   recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
 
   const done = new Promise(resolve => { recorder.onstop = resolve; });
+  const recordStart = Date.now();
   recorder.start();
 
   // pause main playback during export
@@ -818,7 +819,22 @@ async function runExport(){
   await done;
   if (audioCtx) audioCtx.close();
 
-  const blob = new Blob(chunks, { type: mimeType.split(';')[0] });
+  let blob = new Blob(chunks, { type: mimeType.split(';')[0] });
+
+  // MediaRecorder writes WebM files without a Duration in the header (it's an
+  // unknown/streaming value at record time). Most players tolerate that, but
+  // plenty of native apps (Windows Photos/Movies&TV, some phone galleries,
+  // some Mac viewers) refuse to open a file with no duration, or show it as
+  // 0:00 and won't play. Patch the real duration into the container before
+  // handing the file to the user.
+  if (blob.type.includes('webm') && window.ysFixWebmDuration) {
+    try {
+      blob = await ysFixWebmDuration(blob, Date.now() - recordStart, { logger: false });
+    } catch (e) {
+      console.warn('Could not patch WebM duration metadata:', e);
+    }
+  }
+
   const url = URL.createObjectURL(blob);
   downloadBtn.href = url;
   // Use the format that was ACTUALLY recorded (mimeType), not the user's original
