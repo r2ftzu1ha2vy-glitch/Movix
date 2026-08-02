@@ -253,18 +253,75 @@ function addToTimeline(item){
   selectClip('clip', trackType, clip.id);
   clipsAddedCount++;
   if (clipsAddedCount % 3 === 0) showAd();
+  if (window._movixMobileSheets && window._movixMobileSheets.isMobileLayout()) {
+    window._movixMobileSheets.closeSheets();
+  }
 }
 
 // ===================== TABS =====================
 function setupTabs(){
   document.querySelectorAll('.pool-tab').forEach(tab => {
     tab.addEventListener('click', () => {
-      document.querySelectorAll('.pool-tab').forEach(t=>t.classList.remove('active'));
-      tab.classList.add('active');
-      document.querySelectorAll('.pool-panel').forEach(p=>p.classList.add('hidden'));
-      document.getElementById('panel-' + tab.dataset.tab).classList.remove('hidden');
+      activatePoolTab(tab.dataset.tab);
     });
   });
+  setupMobileSheets();
+}
+
+function activatePoolTab(name){
+  document.querySelectorAll('.pool-tab').forEach(t=>t.classList.toggle('active', t.dataset.tab === name));
+  document.querySelectorAll('.pool-panel').forEach(p=>p.classList.add('hidden'));
+  document.getElementById('panel-' + name).classList.remove('hidden');
+  document.querySelectorAll('.mtab').forEach(t=>t.classList.toggle('active', t.dataset.mtab === name));
+}
+
+// ===================== MOBILE SHEETS (bottom tab bar) =====================
+const isMobileLayout = () => window.matchMedia('(max-width: 860px)').matches;
+
+function setupMobileSheets(){
+  const pool = document.querySelector('.pool');
+  const props = document.getElementById('propsPanel');
+  const scrim = document.getElementById('mobileScrim');
+  const mtabs = document.querySelectorAll('.mtab');
+  const propsToggle = document.getElementById('mobilePropsToggle');
+
+  function closeSheets(){
+    pool.classList.remove('sheet-open');
+    props.classList.remove('sheet-open');
+    scrim.classList.remove('show');
+  }
+  function openPool(tabName){
+    props.classList.remove('sheet-open');
+    activatePoolTab(tabName);
+    pool.classList.add('sheet-open');
+    scrim.classList.add('show');
+  }
+  function openProps(){
+    pool.classList.remove('sheet-open');
+    document.querySelectorAll('.mtab').forEach(t=>t.classList.toggle('active', t.dataset.mtab === 'props'));
+    props.classList.add('sheet-open');
+    scrim.classList.add('show');
+  }
+
+  mtabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      const name = tab.dataset.mtab;
+      const alreadyOpenThis =
+        (name === 'props' && props.classList.contains('sheet-open')) ||
+        (name !== 'props' && pool.classList.contains('sheet-open') && document.querySelector('.pool-tab.active')?.dataset.tab === name);
+      if (alreadyOpenThis) { closeSheets(); return; }
+      if (name === 'props') openProps(); else openPool(name);
+    });
+  });
+
+  propsToggle.addEventListener('click', () => {
+    if (props.classList.contains('sheet-open')) closeSheets(); else openProps();
+  });
+
+  scrim.addEventListener('click', closeSheets);
+
+  // expose for other handlers (selection, add-to-timeline) to hook into
+  window._movixMobileSheets = { closeSheets, openProps, openPool, isMobileLayout };
 }
 
 // ===================== TEXT TOOL =====================
@@ -281,6 +338,7 @@ function setupTextTool(){
     extendDuration();
     renderTracks();
     selectClip('clip', 'text', clip.id);
+    // selectClip already opens the props sheet on mobile via its own hook
   });
 }
 
@@ -350,9 +408,10 @@ function renderRuler(){
   const ruler = document.getElementById('ruler');
   ruler.innerHTML = '';
   const px = PX_PER_SEC();
+  const labelW = window.matchMedia('(max-width: 860px)').matches ? 96 : 190;
   const totalW = Math.max(state.duration, 30) * px + 400;
   ruler.style.width = totalW + 'px';
-  document.getElementById('tracks').style.width = (totalW + 190) + 'px';
+  document.getElementById('tracks').style.width = (totalW + labelW) + 'px';
 
   const step = px < 40 ? 5 : px < 90 ? 2 : 1;
   for (let s = 0; s <= Math.max(state.duration, 30) + 20; s += step) {
@@ -424,6 +483,7 @@ function attachClipDrag(clipEl, clip, trackType){
     const origStart = clip.start, origEnd = clip.end;
     const origIn = clip.inPoint, origOut = clip.outPoint;
     const dur = origEnd - origStart;
+    clipEl.setPointerCapture && e.pointerId != null && clipEl.setPointerCapture(e.pointerId);
 
     function onMove(ev){
       const dx = (ev.clientX - startX) / px;
@@ -447,20 +507,24 @@ function attachClipDrag(clipEl, clip, trackType){
       extendDuration();
       renderTracks();
     }
-    function onUp(){
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
+    function onUp(ev){
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+      document.removeEventListener('pointercancel', onUp);
+      clipEl.releasePointerCapture && ev && ev.pointerId != null && clipEl.hasPointerCapture && clipEl.hasPointerCapture(ev.pointerId) && clipEl.releasePointerCapture(ev.pointerId);
     }
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
+    document.addEventListener('pointercancel', onUp);
   };
 
-  clipEl.addEventListener('mousedown', e => {
+  clipEl.addEventListener('pointerdown', e => {
     if (e.target.classList.contains('clip-handle')) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
     startDrag(e, 'move');
   });
-  clipEl.querySelector('.clip-handle.left').addEventListener('mousedown', e => startDrag(e, 'left'));
-  clipEl.querySelector('.clip-handle.right').addEventListener('mousedown', e => startDrag(e, 'right'));
+  clipEl.querySelector('.clip-handle.left').addEventListener('pointerdown', e => { e.stopPropagation(); startDrag(e, 'left'); });
+  clipEl.querySelector('.clip-handle.right').addEventListener('pointerdown', e => { e.stopPropagation(); startDrag(e, 'right'); });
 }
 
 function findBinItem(binId){ return state.bin.find(b => b.id === binId); }
@@ -478,40 +542,44 @@ function setupTimelineDrag(){
   const tracksEl = document.getElementById('tracks');
   const playhead = document.getElementById('playhead');
 
+  const trackLabelW = () => (window.matchMedia('(max-width: 860px)').matches ? 96 : 190);
+
   function seekFromEvent(e, container){
     const px = PX_PER_SEC();
     const rect = container.getBoundingClientRect();
     const scrollLeft = container.scrollLeft || 0;
-    const x = e.clientX - rect.left + scrollLeft - 190;
+    const x = e.clientX - rect.left + scrollLeft - trackLabelW();
     state.playhead = Math.max(0, x / px);
     updatePlayheadUI();
   }
 
-  document.querySelector('.ruler-wrap').addEventListener('mousedown', e => {
+  document.querySelector('.ruler-wrap').addEventListener('pointerdown', e => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
     seekFromEvent(e, tracksEl);
     const onMove = ev => seekFromEvent(ev, tracksEl);
-    const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
+    const onUp = () => {
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+      document.removeEventListener('pointercancel', onUp);
+    };
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
+    document.addEventListener('pointercancel', onUp);
   });
 
-  tracksEl.addEventListener('mousedown', e => {
+  tracksEl.addEventListener('pointerdown', e => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
     if (e.target === tracksEl || e.target.classList.contains('track')) {
       selectClip(null);
       seekFromEvent(e, tracksEl);
-    }
-  });
-
-  document.getElementById('app').addEventListener('mousedown', e => {
-    if (!e.target.closest('.clip') && !e.target.closest('.props') && !e.target.closest('.tracks')) {
-      // click elsewhere deselects, but not required for props panel interactions
     }
   });
 }
 
 function updatePlayheadUI(){
   const px = PX_PER_SEC();
-  document.getElementById('playhead').style.left = (190 + state.playhead * px) + 'px';
+  const labelW = window.matchMedia('(max-width: 860px)').matches ? 96 : 190;
+  document.getElementById('playhead').style.left = (labelW + state.playhead * px) + 'px';
   renderTopTimecode();
   syncMediaPlayback();
 }
@@ -528,6 +596,9 @@ function selectClip(kind, trackType, id){
   state.selection = { kind, track: trackType, id };
   renderTracks();
   renderProps();
+  if (kind === 'clip' && window._movixMobileSheets && window._movixMobileSheets.isMobileLayout()) {
+    window._movixMobileSheets.openProps();
+  }
 }
 
 function getSelectedClip(){
