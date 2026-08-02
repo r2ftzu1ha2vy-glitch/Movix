@@ -821,10 +821,18 @@ async function runExport(){
   const blob = new Blob(chunks, { type: mimeType.split(';')[0] });
   const url = URL.createObjectURL(blob);
   downloadBtn.href = url;
+  // Use the format that was ACTUALLY recorded (mimeType), not the user's original
+  // selection (formatSel) — most browsers can't record real MP4 via MediaRecorder,
+  // so we silently fall back to WebM above. Naming the file .mp4 in that case
+  // produces an unplayable file.
   const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
   downloadBtn.download = `${(document.getElementById('projName').textContent || 'movix-export').trim().replace(/\s+/g,'-')}.${ext}`;
   downloadBtn.classList.remove('hidden');
-  status.textContent = `Done — ${(blob.size/1024/1024).toFixed(1)} MB ready to download.`;
+  if (formatSel !== mimeType) {
+    status.textContent = `Done — ${(blob.size/1024/1024).toFixed(1)} MB ready (saved as .webm — your browser can't encode real MP4).`;
+  } else {
+    status.textContent = `Done — ${(blob.size/1024/1024).toFixed(1)} MB ready to download.`;
+  }
   fill.style.width = '100%';
 
   state.playing = wasPlaying;
