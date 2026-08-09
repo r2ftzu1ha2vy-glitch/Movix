@@ -19,6 +19,11 @@ const PX_PER_SEC = () => state.zoom;
 let idCounter = 1;
 const uid = () => 'id' + (idCounter++);
 
+function trackGutter(){
+  const v = getComputedStyle(document.documentElement).getPropertyValue('--track-gutter').trim();
+  return parseInt(v, 10) || 190;
+}
+
 // ===================== LOADER =====================
 (function bootLoader(){
   const fill = document.getElementById('loaderFill');
@@ -112,14 +117,12 @@ function closeAd(){
   }, 420);
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-  const skipBtn = document.getElementById('skipBtn');
-  if (skipBtn) {
-    skipBtn.addEventListener('click', () => {
-      if (adSkippable) closeAd();
-    });
-  }
-});
+const skipBtnEl = document.getElementById('skipBtn');
+if (skipBtnEl) {
+  skipBtnEl.addEventListener('click', () => {
+    if (adSkippable) closeAd();
+  });
+}
 
 // ===================== TIME HELPERS =====================
 function fmtTC(sec){
@@ -148,6 +151,7 @@ function initApp(){
   setupExportModal();
   setupTextTool();
   setupKeyboard();
+  setupDrawers();
 
   const copyYear = document.getElementById('copyYear');
   if (copyYear) copyYear.textContent = new Date().getFullYear();
@@ -158,12 +162,52 @@ function initApp(){
   requestAnimationFrame(renderLoop);
 }
 
+// ===================== MOBILE DRAWERS =====================
+function setupDrawers(){
+  const pool = document.querySelector('.pool');
+  const props = document.querySelector('.props');
+  const scrim = document.getElementById('drawerScrim');
+  const poolToggle = document.getElementById('poolToggle');
+  const propsToggle = document.getElementById('propsToggle');
+
+  function closeDrawers(){
+    pool.classList.remove('open');
+    props.classList.remove('open');
+    poolToggle.classList.remove('active');
+    propsToggle.classList.remove('active');
+    scrim.classList.remove('show');
+  }
+  function openPool(){
+    props.classList.remove('open'); propsToggle.classList.remove('active');
+    pool.classList.add('open'); poolToggle.classList.add('active');
+    scrim.classList.add('show');
+  }
+  function openProps(){
+    pool.classList.remove('open'); poolToggle.classList.remove('active');
+    props.classList.add('open'); propsToggle.classList.add('active');
+    scrim.classList.add('show');
+  }
+
+  poolToggle.addEventListener('click', () => {
+    pool.classList.contains('open') ? closeDrawers() : openPool();
+  });
+  propsToggle.addEventListener('click', () => {
+    props.classList.contains('open') ? closeDrawers() : openProps();
+  });
+  scrim.addEventListener('click', closeDrawers);
+
+  // expose so selection logic can auto-open the props drawer on mobile
+  window._movixOpenProps = openProps;
+  window._movixCloseDrawers = closeDrawers;
+}
+
 // ===================== IMPORT =====================
 function setupImport(){
   const drop = document.getElementById('importDrop');
   const input = document.getElementById('fileInput');
 
-  drop.addEventListener('click', e => { if(e.target !== input) input.click(); });
+  // Note: #importDrop is a <label> wrapping #fileInput, so clicking it
+  // natively opens the file picker — no extra click-forwarding needed.
   input.addEventListener('change', e => handleFiles(e.target.files));
 
   ['dragover','dragleave','drop'].forEach(evt=>{
@@ -186,6 +230,7 @@ function handleFiles(fileList){
     if (isVideo || isAudio) {
       const el = document.createElement(isVideo ? 'video' : 'audio');
       el.src = url; el.muted = false; el.preload = 'metadata';
+      el.playsInline = true;
       el.addEventListener('loadedmetadata', () => {
         const item = {
           id: uid(), type: isVideo ? 'video' : 'audio', name: file.name,
@@ -195,14 +240,22 @@ function handleFiles(fileList){
         state.bin.push(item);
         renderBin();
       });
+      el.addEventListener('error', () => {
+        console.error('Failed to load media file:', file.name, el.error);
+        alert(`Couldn't import "${file.name}" — the file format may not be supported by this browser.`);
+      });
     } else if (isImage) {
       const img = new Image();
-      img.src = url;
       img.onload = () => {
         const item = { id: uid(), type:'image', name: file.name, url, el: img, duration: 5, width: img.width, height: img.height };
         state.bin.push(item);
         renderBin();
       };
+      img.onerror = () => {
+        console.error('Failed to load image file:', file.name);
+        alert(`Couldn't import "${file.name}" — the file may be corrupted or unsupported.`);
+      };
+      img.src = url;
     }
   });
 }
@@ -253,75 +306,18 @@ function addToTimeline(item){
   selectClip('clip', trackType, clip.id);
   clipsAddedCount++;
   if (clipsAddedCount % 3 === 0) showAd();
-  if (window._movixMobileSheets && window._movixMobileSheets.isMobileLayout()) {
-    window._movixMobileSheets.closeSheets();
-  }
 }
 
 // ===================== TABS =====================
 function setupTabs(){
   document.querySelectorAll('.pool-tab').forEach(tab => {
     tab.addEventListener('click', () => {
-      activatePoolTab(tab.dataset.tab);
+      document.querySelectorAll('.pool-tab').forEach(t=>t.classList.remove('active'));
+      tab.classList.add('active');
+      document.querySelectorAll('.pool-panel').forEach(p=>p.classList.add('hidden'));
+      document.getElementById('panel-' + tab.dataset.tab).classList.remove('hidden');
     });
   });
-  setupMobileSheets();
-}
-
-function activatePoolTab(name){
-  document.querySelectorAll('.pool-tab').forEach(t=>t.classList.toggle('active', t.dataset.tab === name));
-  document.querySelectorAll('.pool-panel').forEach(p=>p.classList.add('hidden'));
-  document.getElementById('panel-' + name).classList.remove('hidden');
-  document.querySelectorAll('.mtab').forEach(t=>t.classList.toggle('active', t.dataset.mtab === name));
-}
-
-// ===================== MOBILE SHEETS (bottom tab bar) =====================
-const isMobileLayout = () => window.matchMedia('(max-width: 860px)').matches;
-
-function setupMobileSheets(){
-  const pool = document.querySelector('.pool');
-  const props = document.getElementById('propsPanel');
-  const scrim = document.getElementById('mobileScrim');
-  const mtabs = document.querySelectorAll('.mtab');
-  const propsToggle = document.getElementById('mobilePropsToggle');
-
-  function closeSheets(){
-    pool.classList.remove('sheet-open');
-    props.classList.remove('sheet-open');
-    scrim.classList.remove('show');
-  }
-  function openPool(tabName){
-    props.classList.remove('sheet-open');
-    activatePoolTab(tabName);
-    pool.classList.add('sheet-open');
-    scrim.classList.add('show');
-  }
-  function openProps(){
-    pool.classList.remove('sheet-open');
-    document.querySelectorAll('.mtab').forEach(t=>t.classList.toggle('active', t.dataset.mtab === 'props'));
-    props.classList.add('sheet-open');
-    scrim.classList.add('show');
-  }
-
-  mtabs.forEach(tab => {
-    tab.addEventListener('click', () => {
-      const name = tab.dataset.mtab;
-      const alreadyOpenThis =
-        (name === 'props' && props.classList.contains('sheet-open')) ||
-        (name !== 'props' && pool.classList.contains('sheet-open') && document.querySelector('.pool-tab.active')?.dataset.tab === name);
-      if (alreadyOpenThis) { closeSheets(); return; }
-      if (name === 'props') openProps(); else openPool(name);
-    });
-  });
-
-  propsToggle.addEventListener('click', () => {
-    if (props.classList.contains('sheet-open')) closeSheets(); else openProps();
-  });
-
-  scrim.addEventListener('click', closeSheets);
-
-  // expose for other handlers (selection, add-to-timeline) to hook into
-  window._movixMobileSheets = { closeSheets, openProps, openPool, isMobileLayout };
 }
 
 // ===================== TEXT TOOL =====================
@@ -338,7 +334,6 @@ function setupTextTool(){
     extendDuration();
     renderTracks();
     selectClip('clip', 'text', clip.id);
-    // selectClip already opens the props sheet on mobile via its own hook
   });
 }
 
@@ -408,10 +403,9 @@ function renderRuler(){
   const ruler = document.getElementById('ruler');
   ruler.innerHTML = '';
   const px = PX_PER_SEC();
-  const labelW = window.matchMedia('(max-width: 860px)').matches ? 96 : 190;
   const totalW = Math.max(state.duration, 30) * px + 400;
   ruler.style.width = totalW + 'px';
-  document.getElementById('tracks').style.width = (totalW + labelW) + 'px';
+  document.getElementById('tracks').style.width = (totalW + trackGutter()) + 'px';
 
   const step = px < 40 ? 5 : px < 90 ? 2 : 1;
   for (let s = 0; s <= Math.max(state.duration, 30) + 20; s += step) {
@@ -483,7 +477,6 @@ function attachClipDrag(clipEl, clip, trackType){
     const origStart = clip.start, origEnd = clip.end;
     const origIn = clip.inPoint, origOut = clip.outPoint;
     const dur = origEnd - origStart;
-    clipEl.setPointerCapture && e.pointerId != null && clipEl.setPointerCapture(e.pointerId);
 
     function onMove(ev){
       const dx = (ev.clientX - startX) / px;
@@ -507,24 +500,20 @@ function attachClipDrag(clipEl, clip, trackType){
       extendDuration();
       renderTracks();
     }
-    function onUp(ev){
-      document.removeEventListener('pointermove', onMove);
-      document.removeEventListener('pointerup', onUp);
-      document.removeEventListener('pointercancel', onUp);
-      clipEl.releasePointerCapture && ev && ev.pointerId != null && clipEl.hasPointerCapture && clipEl.hasPointerCapture(ev.pointerId) && clipEl.releasePointerCapture(ev.pointerId);
+    function onUp(){
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
     }
-    document.addEventListener('pointermove', onMove);
-    document.addEventListener('pointerup', onUp);
-    document.addEventListener('pointercancel', onUp);
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
   };
 
-  clipEl.addEventListener('pointerdown', e => {
+  clipEl.addEventListener('mousedown', e => {
     if (e.target.classList.contains('clip-handle')) return;
-    if (e.pointerType === 'mouse' && e.button !== 0) return;
     startDrag(e, 'move');
   });
-  clipEl.querySelector('.clip-handle.left').addEventListener('pointerdown', e => { e.stopPropagation(); startDrag(e, 'left'); });
-  clipEl.querySelector('.clip-handle.right').addEventListener('pointerdown', e => { e.stopPropagation(); startDrag(e, 'right'); });
+  clipEl.querySelector('.clip-handle.left').addEventListener('mousedown', e => startDrag(e, 'left'));
+  clipEl.querySelector('.clip-handle.right').addEventListener('mousedown', e => startDrag(e, 'right'));
 }
 
 function findBinItem(binId){ return state.bin.find(b => b.id === binId); }
@@ -542,44 +531,40 @@ function setupTimelineDrag(){
   const tracksEl = document.getElementById('tracks');
   const playhead = document.getElementById('playhead');
 
-  const trackLabelW = () => (window.matchMedia('(max-width: 860px)').matches ? 96 : 190);
-
   function seekFromEvent(e, container){
     const px = PX_PER_SEC();
     const rect = container.getBoundingClientRect();
     const scrollLeft = container.scrollLeft || 0;
-    const x = e.clientX - rect.left + scrollLeft - trackLabelW();
+    const x = e.clientX - rect.left + scrollLeft - trackGutter();
     state.playhead = Math.max(0, x / px);
     updatePlayheadUI();
   }
 
-  document.querySelector('.ruler-wrap').addEventListener('pointerdown', e => {
-    if (e.pointerType === 'mouse' && e.button !== 0) return;
+  document.querySelector('.ruler-wrap').addEventListener('mousedown', e => {
     seekFromEvent(e, tracksEl);
     const onMove = ev => seekFromEvent(ev, tracksEl);
-    const onUp = () => {
-      document.removeEventListener('pointermove', onMove);
-      document.removeEventListener('pointerup', onUp);
-      document.removeEventListener('pointercancel', onUp);
-    };
-    document.addEventListener('pointermove', onMove);
-    document.addEventListener('pointerup', onUp);
-    document.addEventListener('pointercancel', onUp);
+    const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
   });
 
-  tracksEl.addEventListener('pointerdown', e => {
-    if (e.pointerType === 'mouse' && e.button !== 0) return;
+  tracksEl.addEventListener('mousedown', e => {
     if (e.target === tracksEl || e.target.classList.contains('track')) {
       selectClip(null);
       seekFromEvent(e, tracksEl);
+    }
+  });
+
+  document.getElementById('app').addEventListener('mousedown', e => {
+    if (!e.target.closest('.clip') && !e.target.closest('.props') && !e.target.closest('.tracks')) {
+      // click elsewhere deselects, but not required for props panel interactions
     }
   });
 }
 
 function updatePlayheadUI(){
   const px = PX_PER_SEC();
-  const labelW = window.matchMedia('(max-width: 860px)').matches ? 96 : 190;
-  document.getElementById('playhead').style.left = (labelW + state.playhead * px) + 'px';
+  document.getElementById('playhead').style.left = (trackGutter() + state.playhead * px) + 'px';
   renderTopTimecode();
   syncMediaPlayback();
 }
@@ -596,9 +581,7 @@ function selectClip(kind, trackType, id){
   state.selection = { kind, track: trackType, id };
   renderTracks();
   renderProps();
-  if (kind === 'clip' && window._movixMobileSheets && window._movixMobileSheets.isMobileLayout()) {
-    window._movixMobileSheets.openProps();
-  }
+  if (window.innerWidth <= 760 && window._movixOpenProps) window._movixOpenProps();
 }
 
 function getSelectedClip(){
@@ -705,10 +688,8 @@ function redo(){
   state.selection = null;
   renderTracks(); renderProps(); renderRuler();
 }
-document.addEventListener('DOMContentLoaded', () => {
-  document.getElementById('undoBtn')?.addEventListener('click', undo);
-  document.getElementById('redoBtn')?.addEventListener('click', redo);
-});
+document.getElementById('undoBtn')?.addEventListener('click', undo);
+document.getElementById('redoBtn')?.addEventListener('click', redo);
 
 // ===================== KEYBOARD =====================
 function setupKeyboard(){
@@ -869,7 +850,6 @@ async function runExport(){
   recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
 
   const done = new Promise(resolve => { recorder.onstop = resolve; });
-  const recordStart = Date.now();
   recorder.start();
 
   // pause main playback during export
@@ -890,36 +870,13 @@ async function runExport(){
   await done;
   if (audioCtx) audioCtx.close();
 
-  let blob = new Blob(chunks, { type: mimeType.split(';')[0] });
-
-  // MediaRecorder writes WebM files without a Duration in the header (it's an
-  // unknown/streaming value at record time). Most players tolerate that, but
-  // plenty of native apps (Windows Photos/Movies&TV, some phone galleries,
-  // some Mac viewers) refuse to open a file with no duration, or show it as
-  // 0:00 and won't play. Patch the real duration into the container before
-  // handing the file to the user.
-  if (blob.type.includes('webm') && window.ysFixWebmDuration) {
-    try {
-      blob = await ysFixWebmDuration(blob, Date.now() - recordStart, { logger: false });
-    } catch (e) {
-      console.warn('Could not patch WebM duration metadata:', e);
-    }
-  }
-
+  const blob = new Blob(chunks, { type: mimeType.split(';')[0] });
   const url = URL.createObjectURL(blob);
   downloadBtn.href = url;
-  // Use the format that was ACTUALLY recorded (mimeType), not the user's original
-  // selection (formatSel) — most browsers can't record real MP4 via MediaRecorder,
-  // so we silently fall back to WebM above. Naming the file .mp4 in that case
-  // produces an unplayable file.
   const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
   downloadBtn.download = `${(document.getElementById('projName').textContent || 'movix-export').trim().replace(/\s+/g,'-')}.${ext}`;
   downloadBtn.classList.remove('hidden');
-  if (formatSel !== mimeType) {
-    status.textContent = `Done — ${(blob.size/1024/1024).toFixed(1)} MB ready (saved as .webm — your browser can't encode real MP4).`;
-  } else {
-    status.textContent = `Done — ${(blob.size/1024/1024).toFixed(1)} MB ready to download.`;
-  }
+  status.textContent = `Done — ${(blob.size/1024/1024).toFixed(1)} MB ready to download.`;
   fill.style.width = '100%';
 
   state.playing = wasPlaying;
