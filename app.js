@@ -55,75 +55,6 @@ function trackGutter(){
   }, 140);
 })();
 
-// ===================== IN-APP AD (shown occasionally) =====================
-let adShowing = false;
-let adSkippable = false;
-let adTimer = null;
-let onAdClosed = null;
-
-function maybeShowAd(chance = 0.35){
-  if (adShowing) return;
-  if (Math.random() > chance) return;
-  showAd();
-}
-
-function showAd(){
-  const adOverlay = document.getElementById('adOverlay');
-  const timeLeftEl = document.getElementById('timeLeft');
-  const skipBtn = document.getElementById('skipBtn');
-  const progressFill = document.getElementById('progressFill');
-
-  adShowing = true;
-  adSkippable = false;
-  adOverlay.classList.remove('hidden');
-  adOverlay.classList.remove('fade-out');
-  progressFill.style.width = '0%';
-  skipBtn.classList.remove('ready');
-  timeLeftEl.style.display = '';
-
-  const TOTAL_SECONDS = 5;
-  let elapsed = 0;
-  timeLeftEl.textContent = `Ad · 0:0${TOTAL_SECONDS}`;
-
-  if (adTimer) clearInterval(adTimer);
-  adTimer = setInterval(() => {
-    elapsed += 1;
-    const remaining = Math.max(TOTAL_SECONDS - elapsed, 0);
-    timeLeftEl.textContent = remaining > 0 ? `Ad · 0:0${remaining}` : 'Ad';
-    progressFill.style.width = `${Math.min((elapsed / TOTAL_SECONDS) * 100, 100)}%`;
-
-    if (elapsed >= TOTAL_SECONDS) {
-      adSkippable = true;
-      skipBtn.classList.add('ready');
-      timeLeftEl.style.display = 'none';
-      clearInterval(adTimer);
-      adTimer = null;
-    }
-  }, 1000);
-}
-
-function closeAd(){
-  if (!adShowing) return;
-  const adOverlay = document.getElementById('adOverlay');
-  adOverlay.classList.add('fade-out');
-  setTimeout(() => {
-    adOverlay.classList.add('hidden');
-    adShowing = false;
-    if (onAdClosed) {
-      const cb = onAdClosed;
-      onAdClosed = null;
-      cb();
-    }
-  }, 420);
-}
-
-const skipBtnEl = document.getElementById('skipBtn');
-if (skipBtnEl) {
-  skipBtnEl.addEventListener('click', () => {
-    if (adSkippable) closeAd();
-  });
-}
-
 // ===================== TIME HELPERS =====================
 function fmtTC(sec){
   sec = Math.max(0, sec);
@@ -159,6 +90,8 @@ function initApp(){
   renderRuler();
   renderTracks();
   renderTopTimecode();
+  updatePlayheadUI(true);
+  window.addEventListener('resize', () => { renderRuler(); renderTracks(); syncTimelineScroll(); });
   requestAnimationFrame(renderLoop);
 }
 
@@ -289,8 +222,6 @@ function renderBin(){
   });
 }
 
-let clipsAddedCount = 0;
-
 function addToTimeline(item){
   pushHistory();
   const trackType = item.type === 'audio' ? 'audio' : 'video';
@@ -303,9 +234,9 @@ function addToTimeline(item){
   list.push(clip);
   extendDuration();
   renderTracks();
-  selectClip('clip', trackType, clip.id);
-  clipsAddedCount++;
-  if (clipsAddedCount % 3 === 0) showAd();
+  selectClip('clip', trackType, clip.id, false);
+  // on phones, get the drawer out of the way so the new clip is visible
+  if (window._movixCloseDrawers) window._movixCloseDrawers();
 }
 
 // ===================== TABS =====================
@@ -395,17 +326,23 @@ function setupZoom(){
     state.zoom = parseInt(range.value, 10);
     renderRuler();
     renderTracks();
+    syncTimelineScroll();
   });
 }
 
 // ===================== RULER =====================
+function timelineWidth(){
+  return Math.max(state.duration, 30) * PX_PER_SEC() + 400;
+}
+// clips are positioned inside the track, after the (sticky) label gutter
+const clipLeft = sec => trackGutter() + sec * PX_PER_SEC();
+
 function renderRuler(){
   const ruler = document.getElementById('ruler');
   ruler.innerHTML = '';
   const px = PX_PER_SEC();
-  const totalW = Math.max(state.duration, 30) * px + 400;
+  const totalW = timelineWidth();
   ruler.style.width = totalW + 'px';
-  document.getElementById('tracks').style.width = (totalW + trackGutter()) + 'px';
 
   const step = px < 40 ? 5 : px < 90 ? 2 : 1;
   for (let s = 0; s <= Math.max(state.duration, 30) + 20; s += step) {
@@ -428,11 +365,13 @@ function renderTracks(){
   const wrap = document.getElementById('tracks');
   wrap.innerHTML = '';
   const px = PX_PER_SEC();
+  const trackW = timelineWidth();
 
   TRACK_DEFS.forEach(def => {
     const trackEl = document.createElement('div');
     trackEl.className = 'track';
     trackEl.dataset.track = def.key;
+    trackEl.style.width = (trackW + trackGutter()) + 'px';
 
     const label = document.createElement('div');
     label.className = 'track-label';
@@ -444,7 +383,7 @@ function renderTracks(){
       const kindClass = def.key === 'text' ? 'text-clip' : def.key === 'audio' ? 'audio-clip' : '';
       clipEl.className = `clip ${kindClass}`.trim();
       if (state.selection && state.selection.id === clip.id) clipEl.classList.add('selected');
-      clipEl.style.left = (clip.start * px) + 'px';
+      clipEl.style.left = clipLeft(clip.start) + 'px';
       clipEl.style.width = Math.max(6, (clip.end - clip.start) * px) + 'px';
       clipEl.dataset.id = clip.id;
       clipEl.dataset.track = def.key;
@@ -463,6 +402,9 @@ function renderTracks(){
 }
 
 // ===================== CLIP DRAG / TRIM =====================
+// Pointer events so mouse, touch and pen all work. During a drag the clip
+// element is updated in place (rebuilding it would drop the touch pointer);
+// the tracks are fully re-rendered once the gesture ends.
 function attachClipDrag(clipEl, clip, trackType){
   clipEl.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -470,16 +412,21 @@ function attachClipDrag(clipEl, clip, trackType){
   });
 
   const startDrag = (e, mode) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
     e.preventDefault(); e.stopPropagation();
     pushHistory();
     const px = PX_PER_SEC();
     const startX = e.clientX;
+    const pointerId = e.pointerId;
     const origStart = clip.start, origEnd = clip.end;
     const origIn = clip.inPoint, origOut = clip.outPoint;
     const dur = origEnd - origStart;
+    let moved = false;
 
     function onMove(ev){
+      if (ev.pointerId !== pointerId) return;
       const dx = (ev.clientX - startX) / px;
+      if (Math.abs(ev.clientX - startX) > 3) moved = true;
       if (mode === 'move') {
         let ns = Math.max(0, origStart + dx);
         clip.start = ns; clip.end = ns + dur;
@@ -497,23 +444,35 @@ function attachClipDrag(clipEl, clip, trackType){
         clip.end = ne;
         if (clip.type !== 'text') clip.outPoint = origOut + (ne - origEnd);
       }
-      extendDuration();
-      renderTracks();
+      clipEl.style.left = clipLeft(clip.start) + 'px';
+      clipEl.style.width = Math.max(6, (clip.end - clip.start) * px) + 'px';
     }
-    function onUp(){
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
+    function onUp(ev){
+      if (ev.pointerId !== pointerId) return;
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+      if (moved) {
+        extendDuration();
+        renderTracks();
+        // the re-render replaced the element, so a click won't fire — keep selection in sync
+        if (state.selection && state.selection.id === clip.id) renderProps();
+      } else {
+        // a tap / click without movement: drop the history entry we just pushed
+        state.history.pop();
+      }
     }
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
   };
 
-  clipEl.addEventListener('mousedown', e => {
+  clipEl.addEventListener('pointerdown', e => {
     if (e.target.classList.contains('clip-handle')) return;
     startDrag(e, 'move');
   });
-  clipEl.querySelector('.clip-handle.left').addEventListener('mousedown', e => startDrag(e, 'left'));
-  clipEl.querySelector('.clip-handle.right').addEventListener('mousedown', e => startDrag(e, 'right'));
+  clipEl.querySelector('.clip-handle.left').addEventListener('pointerdown', e => startDrag(e, 'left'));
+  clipEl.querySelector('.clip-handle.right').addEventListener('pointerdown', e => startDrag(e, 'right'));
 }
 
 function findBinItem(binId){ return state.bin.find(b => b.id === binId); }
@@ -527,46 +486,80 @@ function extendDuration(){
 
 // ===================== TIMELINE SCRUB =====================
 function setupTimelineDrag(){
-  const rulerWrap = document.getElementById('ruler-wrap') || document.querySelector('.ruler-wrap');
+  const rulerWrap = document.getElementById('rulerWrap');
   const tracksEl = document.getElementById('tracks');
-  const playhead = document.getElementById('playhead');
 
-  function seekFromEvent(e, container){
-    const px = PX_PER_SEC();
-    const rect = container.getBoundingClientRect();
-    const scrollLeft = container.scrollLeft || 0;
-    const x = e.clientX - rect.left + scrollLeft - trackGutter();
-    state.playhead = Math.max(0, x / px);
+  function seekFromEvent(e){
+    const rect = tracksEl.getBoundingClientRect();
+    const x = e.clientX - rect.left + tracksEl.scrollLeft - trackGutter();
+    state.playhead = Math.max(0, x / PX_PER_SEC());
     updatePlayheadUI();
   }
 
-  document.querySelector('.ruler-wrap').addEventListener('mousedown', e => {
-    seekFromEvent(e, tracksEl);
-    const onMove = ev => seekFromEvent(ev, tracksEl);
-    const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
-  });
+  function beginScrub(e){
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    e.preventDefault();
+    const pointerId = e.pointerId;
+    seekFromEvent(e);
+    const onMove = ev => { if (ev.pointerId === pointerId) seekFromEvent(ev); };
+    const onUp = ev => {
+      if (ev.pointerId !== pointerId) return;
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+  }
 
-  tracksEl.addEventListener('mousedown', e => {
+  rulerWrap.addEventListener('pointerdown', beginScrub);
+
+  // empty timeline space: tap to move the playhead and deselect.
+  // (touch scrolling still works here — only the ruler and clips lock touch gestures)
+  let tapStart = null;
+  tracksEl.addEventListener('pointerdown', e => {
     if (e.target === tracksEl || e.target.classList.contains('track')) {
-      selectClip(null);
-      seekFromEvent(e, tracksEl);
-    }
+      tapStart = { x: e.clientX, y: e.clientY, id: e.pointerId };
+    } else tapStart = null;
   });
+  tracksEl.addEventListener('pointerup', e => {
+    if (!tapStart || tapStart.id !== e.pointerId) return;
+    const moved = Math.hypot(e.clientX - tapStart.x, e.clientY - tapStart.y) > 6;
+    tapStart = null;
+    if (moved) return;
+    selectClip(null);
+    seekFromEvent(e);
+  });
+  tracksEl.addEventListener('pointercancel', () => { tapStart = null; });
 
-  document.getElementById('app').addEventListener('mousedown', e => {
-    if (!e.target.closest('.clip') && !e.target.closest('.props') && !e.target.closest('.tracks')) {
-      // click elsewhere deselects, but not required for props panel interactions
-    }
-  });
+  // keep ruler + playhead aligned with the horizontally scrolling tracks
+  tracksEl.addEventListener('scroll', syncTimelineScroll, { passive: true });
 }
 
-function updatePlayheadUI(){
+function syncTimelineScroll(){
+  const sl = document.getElementById('tracks').scrollLeft;
+  document.getElementById('ruler').style.transform = `translateX(${-sl}px)`;
+  updatePlayheadUI(true);
+}
+
+function updatePlayheadUI(skipSync){
   const px = PX_PER_SEC();
-  document.getElementById('playhead').style.left = (trackGutter() + state.playhead * px) + 'px';
+  const tr = document.getElementById('tracks');
+  let x = state.playhead * px - tr.scrollLeft;   // relative to the start of the track area
+  if (state.playing) {
+    // keep the playhead in view while playing
+    const viewW = tr.clientWidth - trackGutter();
+    if (x > viewW - 24 || x < 0) {
+      tr.scrollLeft = Math.max(0, state.playhead * px - 40);
+      x = state.playhead * px - tr.scrollLeft;
+    }
+  }
+  const ph = document.getElementById('playhead');
+  ph.style.left = (trackGutter() + x) + 'px';
+  ph.style.visibility = x < -1 ? 'hidden' : 'visible'; // scrolled under the labels
   renderTopTimecode();
-  syncMediaPlayback();
+  if (!skipSync) syncMediaPlayback();
 }
 
 function renderTopTimecode(){
@@ -576,12 +569,12 @@ function renderTopTimecode(){
 }
 
 // ===================== SELECTION / PROPERTIES =====================
-function selectClip(kind, trackType, id){
+function selectClip(kind, trackType, id, openPanel = true){
   if (!kind) { state.selection = null; renderTracks(); renderProps(); return; }
   state.selection = { kind, track: trackType, id };
   renderTracks();
   renderProps();
-  if (window.innerWidth <= 760 && window._movixOpenProps) window._movixOpenProps();
+  if (openPanel && window.matchMedia('(max-width: 900px)').matches && window._movixOpenProps) window._movixOpenProps();
 }
 
 function getSelectedClip(){
@@ -797,10 +790,7 @@ function setupExportModal(){
     document.getElementById('exportDownload').classList.add('hidden');
     document.getElementById('exportStart').classList.remove('hidden');
   }
-  document.getElementById('exportBtn').addEventListener('click', () => {
-    showAd();
-    onAdClosed = openExportModal;
-  });
+  document.getElementById('exportBtn').addEventListener('click', openExportModal);
   document.getElementById('exportCancel').addEventListener('click', () => modal.classList.add('hidden'));
   document.getElementById('exportStart').addEventListener('click', runExport);
 }
